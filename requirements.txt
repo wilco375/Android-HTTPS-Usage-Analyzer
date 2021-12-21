@@ -1,0 +1,3 @@
+termcolor
+gplaycli
+beautifulsoup4
