@@ -1,3 +1,4 @@
+import subprocess
 import sys
 import os
 from os import path
@@ -9,6 +10,7 @@ import shutil
 import zipfile
 import argparse
 import requests
+import socket
 from bs4 import BeautifulSoup
 
 workdir = ''
@@ -32,6 +34,10 @@ def run():
                         help='force re-processing of urls')
     parser.add_argument('-fa', '--force-analyze', action='store_true', dest='force_analyze',
                         help='force re-analysis of urls')
+    parser.add_argument('-ft', '--force-analyze-tls', action='store_true', dest='force_analyze_tls',
+                        help='force re-analysis of the TLS configuration of found domains')
+    parser.add_argument('-ftf', '--force-analyze-tls-failed', action='store_true', dest='force_analyze_tls_failed',
+                        help='force re-analysis of the TLS configuration of domains where the configuration could previously not be determined')
 
     parser.add_argument('-u', '--google-username', nargs='?', dest='google_username',
                         help='google username to authenticate with for usage with apkeep to download apps')
@@ -65,6 +71,9 @@ def run():
 
     print("\n=== Analyzing URLs ===")
     analyze_urls(args.force_analyze)
+
+    print("\n=== Analyzing TLS configurations ===")
+    analyze_tls(args.force_analyze_tls, args.force_analyze_tls_failed)
 
 
 def get_app_package_ids(force=False):
@@ -145,7 +154,7 @@ def download_apks(force=False, google_username=None, google_password=None):
     :param google_username: Google username to use with apkeep to download apks from the Google Play store
     :param google_password: Google password to use with apkeep to download apks from the Google Play store
     """
-    
+
     # Check if file with apps to download exists
     if not path.exists(path.join(workdir, 'apps.json')):
         print(colored('No apps.json file found, not downloading any apks', 'yellow'))
@@ -188,7 +197,7 @@ def check_apk(package_id, file):
     :param package_id: package id of the app
     :param file: path of file to check
     """
-    
+
     # Check if apk file exists
     if not path.exists(file):
         print(colored(f'Error: app {package_id} failed to download', 'red'))
@@ -233,7 +242,7 @@ def decompile_apks(force=False):
     Decompile the apks using apktool
     :param force: force decompiling of apks, even if the apk file has already been decompiled before
     """
-    
+
     # Find apk files in working directory
     apks = glob.glob(path.join(workdir, '*.apk'))
 
@@ -249,7 +258,7 @@ def decompile_apks(force=False):
         os.mkdir(decompile_dir)
     for apk in apks:
         print(f'Decompiling {path.basename(apk)}...')
-        
+
         # Check if apk is already decompiled
         decompile_apk_dir = path.join(decompile_dir, path.splitext(path.basename(apk))[0])
         if path.exists(decompile_apk_dir):
@@ -276,7 +285,7 @@ def extract_urls(force=False):
     Extract the urls from the decompiled apks
     :param force: force extraction of urls, even if the urls have already been extracted before
     """
-    
+
     # Find decompiled apk files in working directory
     decompiled_dirs = [file for file in glob.glob(path.join(workdir, 'decompiled', '*')) if path.isdir(file)]
 
@@ -297,6 +306,16 @@ def extract_urls(force=False):
                 # Delete file
                 print(colored(f'Deleting existing extracted URLs file', 'yellow'))
                 os.remove(json_path)
+
+                processed_json_path = path.join(decompiled_dir, 'urls_processed.json')
+                if path.exists(processed_json_path):
+                    # Delete processed URL files, it depends on the urls.json file
+                    os.remove(processed_json_path)
+
+                analyzed_json_path = path.join(decompiled_dir, 'urls_analyzed.json')
+                if path.exists(analyzed_json_path):
+                    # Delete analyzed URL files, it depends on the urls.json file
+                    os.remove(analyzed_json_path)
             else:
                 # Skip app
                 print(colored(f'Skipping extraction of URLs from {path.basename(decompiled_dir)}, already extracted', 'yellow'))
@@ -342,7 +361,7 @@ def extract_app_urls(app_dir):
                             })
             except UnicodeDecodeError:
                 # Skip binary file
-                pass  
+                pass
 
     return urls
 
@@ -352,7 +371,7 @@ def process_urls(force=False):
     Process the urls extracted from the decompiled apks by removing non-api urls
     :param force: force processing of urls, even if the urls have already been processed before
     """
-    
+
     # Find extracted URLs in working directory
     json_files = [file for file in glob.glob(path.join(workdir, 'decompiled', '*', 'urls.json')) if path.isfile(file)]
 
@@ -373,6 +392,11 @@ def process_urls(force=False):
                 # Delete file
                 print(colored(f'Deleting existing processed URLs file', 'yellow'))
                 os.remove(json_path)
+
+                analyzed_json_path = path.join(path.dirname(json_file), 'urls_analyzed.json')
+                if path.exists(analyzed_json_path):
+                    # Delete analyzed URL files, it depends on the urls.json file
+                    os.remove(analyzed_json_path)
             else:
                 # Skip app
                 print(colored(f'Skipping processing of URLs from {path.basename(path.dirname(json_file))}, already processed', 'yellow'))
@@ -389,17 +413,83 @@ def process_urls(force=False):
             if url['line'].strip()[0] in ['*', '/']:
                 # Skip comments
                 continue
-            if 'schemas.android.com' in url['domain'].lower() or 'w3.org' in url['domain'].lower() or 'xsd' in url['url']:
-                # Skip resource schema URLs
+            if 'w3.org' in url['domain'].lower() or \
+                    'ns.adobe.com' in url['domain'].lower() or \
+                    'xml.org' in url['domain'].lower() or \
+                    'xml.apache.org' in url['domain'].lower() or \
+                    'xmlpull.org' in url['domain'].lower() or \
+                    'ietf.org' in url['domain'].lower() or \
+                    'useplus.org' in url['domain'].lower() or \
+                    'cipa.jp' in url['domain'].lower() or \
+                    'whatwg.org' in url['domain'].lower() or \
+                    'java.sun.com' in url['domain'].lower() or \
+                    'json-schema.org' in url['domain'].lower() or \
+                    'iptc.org' in url['domain'].lower() or \
+                    'aiim.org' in url['domain'].lower() or \
+                    'npes.org' in url['domain'].lower() or \
+                    'aomedia.org' in url['domain'].lower() or \
+                    'purl.org/dc/' in url['url'].lower() or \
+                    'specs' in url['url'].lower() or \
+                    'specification' in url['url'].lower() or \
+                    'shemas' in url['url'].lower() or \
+                    'schemas' in url['url'].lower() or \
+                    'xsd' in url['url'].lower():
+                # Skip resource schema URLs and protocols
                 continue
             if 'example.' in url['domain'].lower():
                 # Skip example domain
                 continue
-            if url['domain'].lower() == 'github.com':
-                # Skip links to GitHub repositories
+            if url['domain'].lower() == 'github.com' or \
+                    url['domain'].lower() == 'bitbucket.org' or \
+                    url['domain'].lower() == 'gitlab.com' or \
+                    url['domain'].lower() == 'code.google.com' or \
+                    url['domain'].lower() == 'jquery.org' or \
+                    url['domain'].lower() == 'momentjs.com' or \
+                    url['domain'].lower() == 'stackoverflow.com':
+                # Skip links to code
                 continue
-            if 'license' in url['url'].lower():
+            if url['domain'].lower() == 'goo.gl' or \
+                    url['domain'].lower() == 'amzn.to' or \
+                    url['domain'].lower() == 'bit.ly' or \
+                    url['domain'].lower() == 'fb.gg' or \
+                    url['domain'].lower() == 'fb.me' or \
+                    url['domain'].lower() == 'go.microsoft.com':
+                # Skip shortened URLs
+                continue
+            if 'license' in url['url'].lower() or \
+                    'mozilla.org/mpl' in url['url'].lower():
                 # Skip license URLs
+                continue
+            if 'docs' in url['url'].lower() or 'documentation' in url['url'].lower():
+                # Skip documentation URLs
+                continue
+            if '.html' in url['url'].lower():
+                # Skip plain HTML files
+                continue
+            if 'play.google.com/store' in url['url'].lower():
+                # Skip Google Play store URLs
+                continue
+            if 'google.com/search' in url['url'].lower() or url['domain'] == 'www.google.com':
+                # Skip Google search URLs
+                continue
+            if url['domain'] == '.facebook.com' or \
+                    url['domain'] == 'facebook.com' or \
+                    url['domain'] == 'www.facebook.com' or \
+                    url['domain'] == 'm.facebook.com' or \
+                    url['domain'] == 'plus.google.com' or \
+                    url['domain'] == 'instagram.com' or \
+                    url['domain'] == 'www.instagram.com' or \
+                    url['domain'] == 'twitter.com' or \
+                    url['domain'] == 'www.twitter.com' or \
+                    url['domain'] == 'linkedin.com' or \
+                    url['domain'] == 'www.linkedin.com' or \
+                    url['domain'] == 'youtube.com' or \
+                    url['domain'] == 'www.youtube.com':
+                # Skip social media URLs that are not API endpoints
+                # API endpoints use different (sub)domains than the domains above
+                continue
+            if any(url['url'].endswith(extension) for extension in ['.png', '.jpg', '.jpeg', '.gif', '.svg', '.webp', '.mp3', '.mp4', '.webm']):
+                # Skip images / video / audio
                 continue
 
             processed_urls.append(url)
@@ -459,14 +549,87 @@ def analyze_urls(force=False):
         # Write URLs to json file
         with open(json_path, 'w') as f:
             json.dump({
-                'domains': list(domain_list),
+                'domains': sorted(list(domain_list)),
                 'domain_count': domain_count,
-                'urls': list(url_list),
+                'urls': sorted(list(url_list)),
                 'url_count': url_count,
                 'url_https_count': url_https_count,
                 'url_http_count': url_http_count
             }, f, indent=4)
             print(f'Analysis info saved to {json_path}')
+
+
+def analyze_tls(force=False, force_failed=False):
+    """
+    Analyze TLS support for the domains extracted from the apps using tls-scan
+    :param force: force analysis of TLS, even if the TLS has already been analyzed before
+    :param force_failed: force re-analysis of TLS for domains which tls-scan previously failed
+    """
+    json_file = path.join(workdir, 'tls.json')
+
+    # Get existing TLS analysis
+    tls_configs = {}
+    if path.exists(json_file):
+        with open(json_file, 'r') as f:
+            tls_configs = json.load(f)
+
+    # Load domain name list
+    urls_json_files = [file for file in glob.glob(path.join(workdir, 'decompiled', '*', 'urls_analyzed.json')) if path.isfile(file)]
+    domains = set()
+    for urls_json_file in urls_json_files:
+        with open(urls_json_file, 'r') as f:
+            data = json.load(f)
+            for domain in data['domains']:
+                # Only analyze domains that haven't been analyzed before, unless forced otherwise
+                if domain in tls_configs and not force and not (force_failed and tls_configs[domain] is None):
+                    print(colored(f'Skipping analysis of TLS of {domain}, already analyzed', 'yellow'))
+                    continue
+                else:
+                    domains.add(domain)
+
+    # Analyze TLS configurations
+    print(f'Analyzing TLS configurations for {len(domains)} domains')
+
+    for domain in domains:
+        print(f'Analyzing TLS for {domain}...')
+
+        # Run tls-scan on the domain
+        retry = 3
+        while retry < 3:
+            # We retry the scan several times because experience showed that sometimes the scan fails for unknown reasons
+            cmd = f'tls-scan --cacert /etc/ssl/certs/ca-certificates.crt --all -c "{domain}"'
+            output = subprocess.check_output(cmd, shell=True).decode('utf-8')
+            if output.strip() == '':
+                print(colored(f'No TLS configuration found for {domain}', 'yellow'))
+                tls_configs[domain] = None
+            else:
+                try:
+                    tls_configs[domain] = json.loads(output)
+                    break
+                except json.decoder.JSONDecodeError:
+                    print(colored(f'Error: could not parse TLS configuration for {domain}', 'red'))
+                    print(output)
+                    tls_configs[domain] = None
+
+            print(colored(f'Retrying TLS scan for {domain}', 'yellow'))
+            retry += 1
+
+        if tls_configs[domain] is None:
+            # Test if domain exists
+            print(colored(f'TLS scan failed for {domain}, checking domain', 'yellow'))
+            try:
+                socket.gethostbyname(domain)
+                # Domain is not accessible via https, but does exist
+                tls_configs[domain] = False
+            except:
+                # Domain not available
+                pass
+
+        # Write intermediate result to json file
+        with open(json_file, 'w') as f:
+            json.dump(tls_configs, f)
+
+    print(f'TLS configurations saved to {json_file}')
 
 
 if __name__ == '__main__':

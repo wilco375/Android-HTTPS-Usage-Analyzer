@@ -3,3 +3,6 @@
 
 # Ignore working directory
 source
+
+# Ignore venv
+venv

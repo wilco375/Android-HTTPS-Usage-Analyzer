@@ -5,10 +5,13 @@
 `pip3 install --requirement requirements.txt`
 
 ### Install apkeep to automatically download apk files
-`cargo install apkeep`
+[Install apkeep](https://github.com/EFForg/apkeep)
 
 ### Install apktool to decompile apk files
 [Install Apktool](https://ibotpeaches.github.io/Apktool/)
+
+### Install tls-scan to analyze the TLS configurations of domains
+[Install tls-scan](https://github.com/prbinu/tls-scan)
 
 ## Usage
 Create a working directory to store the apk files and the output files. Then run the following command:

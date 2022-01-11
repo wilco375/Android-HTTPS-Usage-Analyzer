@@ -1,3 +1,4 @@
-termcolor
-gplaycli
-beautifulsoup4
+termcolor~=1.1.0
+gplaycli~=3.29
+beautifulsoup4~=4.10.0
+requests~=2.27.1
