@@ -75,6 +75,8 @@ def run():
     print("\n=== Analyzing TLS configurations ===")
     analyze_tls(args.force_analyze_tls, args.force_analyze_tls_failed)
 
+    calculate_statistics()
+
 
 def get_app_package_ids(force=False):
     """
@@ -343,6 +345,10 @@ def extract_app_urls(app_dir):
     # Loop through all files in app directory
     for root, dirs, files in os.walk(app_dir):
         for file in files:
+            if os.path.splitext(file)[1] not in ['.smali', '.xml', '.js', '.html', '.java', '.json']:
+                # Do not extract URLs from text file such as README or LICENSE files
+                continue
+
             try:
                 with open(os.path.join(root, file), 'r') as f:
                     for line in f.readlines():
@@ -444,6 +450,7 @@ def process_urls(force=False):
                     url['domain'].lower() == 'gitlab.com' or \
                     url['domain'].lower() == 'code.google.com' or \
                     url['domain'].lower() == 'jquery.org' or \
+                    url['domain'].lower() == 'jsoup.org' or \
                     url['domain'].lower() == 'momentjs.com' or \
                     url['domain'].lower() == 'stackoverflow.com':
                 # Skip links to code
@@ -541,17 +548,21 @@ def analyze_urls(force=False):
         domain_list = set([url['domain'] for url in urls])
         domain_count = len(domain_list)
 
-        url_list = set([url['url'] for url in urls])
+        url_list = set([(url['url'], url['domain'], url['url'].lower().startswith('https://')) for url in urls])
         url_count = len(url_list)
-        url_https_count = len([url for url in url_list if url.lower().startswith('https://')])
-        url_http_count = len([url for url in url_list if url.lower().startswith('http://')])
+        url_https_count = len([url for url in url_list if url[2]])
+        url_http_count = len([url for url in url_list if not url[2]])
 
         # Write URLs to json file
         with open(json_path, 'w') as f:
             json.dump({
                 'domains': sorted(list(domain_list)),
                 'domain_count': domain_count,
-                'urls': sorted(list(url_list)),
+                'urls': [{
+                    'url': url[0],
+                    'domain': url[1],
+                    'https': url[2]
+                } for url in url_list],
                 'url_count': url_count,
                 'url_https_count': url_https_count,
                 'url_http_count': url_http_count
@@ -630,6 +641,90 @@ def analyze_tls(force=False, force_failed=False):
             json.dump(tls_configs, f)
 
     print(f'TLS configurations saved to {json_file}')
+
+
+def calculate_statistics():
+    http_only_apps = 0
+    https_only_apps = 0
+
+    http_urls = 0
+    https_urls = 0
+
+    http_with_https_available = 0
+    https_with_old_config = 0
+    https_with_intermediate_config = 0
+    https_with_modern_config = 0
+
+    urls_json_files = [file for file in glob.glob(path.join(workdir, 'decompiled', '*', 'urls_analyzed.json')) if path.isfile(file)]
+    tls_json_file = path.join(workdir, 'tls.json')
+    with open(tls_json_file, 'r') as f:
+        tls_data = json.load(f)
+
+    application_count = len(urls_json_files)
+
+    for urls_json_file in urls_json_files:
+        with open(urls_json_file, 'r') as f:
+            data = json.load(f)
+        if data['url_https_count'] == 0 and data['url_http_count'] != 0:
+            http_only_apps += 1
+        elif data['url_https_count'] != 0 and data['url_http_count'] == 0:
+            https_only_apps += 1
+
+        http_urls += data['url_http_count']
+        https_urls += data['url_https_count']
+
+        for url in data['urls']:
+            if not url['https']:
+                # Check if URL supports TLS
+                if tls_data[url['domain']] is None:
+                    # Not a valid domain
+                    http_urls -= 1
+                elif tls_data[url['domain']] is not False:
+                    # URL domain has TLS support
+                    http_with_https_available += 1
+            else:
+                # Check if TLS is secure
+                if tls_data[url['domain']] is None:
+                    # Not a valid domain
+                    https_urls -= 1
+                elif tls_data[url['domain']] is False:
+                    # URL domain does not have TLS support
+                    https_with_old_config += 1
+                else:
+                    security = mozilla_tls_configuration_security(tls_data[url['domain']])
+                    if security == 'old':
+                        https_with_old_config += 1
+                    elif security == 'intermediate':
+                        https_with_intermediate_config += 1
+                    elif security == 'modern':
+                        https_with_modern_config += 1
+
+    print(f"Found {http_only_apps}/{application_count} applications with HTTP only")
+    print(f"Found {https_only_apps}/{application_count} applications with HTTPS only")
+    print(f"Found {application_count - http_only_apps - https_only_apps}/{application_count} applications with mixed HTTP/HTTPS")
+
+    print(f"Found {http_with_https_available}/{http_urls} URLs using HTTP that could also use HTTPS")
+    print(f"Found {https_with_old_config}/{https_urls} URLs using old TLS config")
+    print(f"Found {https_with_intermediate_config}/{https_urls} URLs using intermediate TLS config")
+    print(f"Found {https_with_modern_config}/{https_urls} URLs using modern TLS config")
+
+
+def mozilla_tls_configuration_security(configuration):
+    # The TLS version reported in tlsVersion does not always seem to be in the tlsVersions list
+    if configuration['tlsVersion'] not in configuration['tlsVersions']:
+        configuration['tlsVersions'].append(configuration['tlsVersion'].replace('.', '_'))
+
+    # TODO Add cipher checks
+    if 'TLSv1_3' in configuration['tlsVersions']:
+        if len(configuration['tlsVersions']) == 1:
+            # Supports only TLS 1.3
+            return 'modern'
+        elif 'TLSv1_2' in configuration['tlsVersions'] and \
+                len(configuration['tlsVersions']) == 2:
+            # Supports only TLS 1.2 and TLS 1.3
+            return 'intermediate'
+        else:
+            return 'old'
 
 
 if __name__ == '__main__':
