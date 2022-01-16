@@ -165,7 +165,7 @@ def download_apks(force=False, google_username=None, google_password=None):
     # Loop through apps to download
     with open(path.join(workdir, 'apps.json')) as f:
         packages = json.load(f)
-    package_ids = [package['package_id'] for package in packages if package['index'] <= 3]
+    package_ids = [package['package_id'] for package in packages]
     for package_id in package_ids:
         apk_file = path.join(workdir, package_id+'.apk')
 
@@ -339,7 +339,7 @@ def extract_app_urls(app_dir):
     :param app_dir: directory of the decompiled app files
     :return: list of objects that contain the found urls, as well as their file, line and domain name 
     """
-    url_regex = re.compile('(.*(https?://((?:www\.)?[-a-zA-Z0-9@:%._+~#=]{2,256}\.[a-z]{2,6})[-a-zA-Z0-9@:%_+.~#?&/=]*).*)')
+    url_regex = re.compile('(https?://((?:www\.)?[-a-zA-Z0-9@:%._+~#=]{2,256}\.[a-z]{2,6})[-a-zA-Z0-9@:%_+.~#?&/=]*)')
     urls = []
 
     # Loop through all files in app directory
@@ -361,9 +361,9 @@ def extract_app_urls(app_dir):
                         for result in results:
                             urls.append({
                                 'file': os.path.join(root, file),
-                                'line': result[0],
-                                'url': result[1],
-                                'domain': result[2]
+                                'line': line,
+                                'url': result[0],
+                                'domain': result[1]
                             })
             except UnicodeDecodeError:
                 # Skip binary file
