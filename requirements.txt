@@ -2,3 +2,5 @@ termcolor~=1.1.0
 gplaycli~=3.29
 beautifulsoup4~=4.10.0
 requests~=2.27.1
+numpy~=1.20.3
+matplotlib~=3.5.1

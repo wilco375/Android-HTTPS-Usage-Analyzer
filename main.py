@@ -1,6 +1,7 @@
 import subprocess
 import sys
 import os
+import time
 from os import path
 import glob
 from termcolor import colored
@@ -12,6 +13,8 @@ import argparse
 import requests
 import socket
 from bs4 import BeautifulSoup
+import numpy as np
+import matplotlib.pyplot as plt
 
 workdir = ''
 
@@ -39,6 +42,9 @@ def run():
     parser.add_argument('-ftf', '--force-analyze-tls-failed', action='store_true', dest='force_analyze_tls_failed',
                         help='force re-analysis of the TLS configuration of domains where the configuration could previously not be determined')
 
+    parser.add_argument('-so', '--statistics-only', action='store_true', dest='statistics_only',
+                        help='only show statistics and skip all other steps')
+
     parser.add_argument('-u', '--google-username', nargs='?', dest='google_username',
                         help='google username to authenticate with for usage with apkeep to download apps')
     parser.add_argument('-p', '--google-password', nargs='?', dest='google_password',
@@ -54,26 +60,27 @@ def run():
         sys.exit(1)
 
     # Run program
-    print("=== Extracting top apps from Google Play ===")
-    get_app_package_ids(args.force_scrape)
+    if not args.statistics_only:
+        print("=== Extracting top apps from Google Play ===")
+        get_app_package_ids(args.force_scrape)
 
-    print("=== Downloading apps ===")
-    download_apks(args.force_download_apps, args.google_username, args.google_password)
+        print("=== Downloading apps ===")
+        download_apks(args.force_download_apps, args.google_username, args.google_password)
 
-    print("\n=== Decompiling apps ===")
-    decompile_apks(args.force_decompile)
+        print("\n=== Decompiling apps ===")
+        decompile_apks(args.force_decompile)
 
-    print("\n=== Extracting URLs ===")
-    extract_urls(args.force_extract)
+        print("\n=== Extracting URLs ===")
+        extract_urls(args.force_extract)
 
-    print("\n=== Processing URLs ===")
-    process_urls(args.force_process)
+        print("\n=== Processing URLs ===")
+        process_urls(args.force_process)
 
-    print("\n=== Analyzing URLs ===")
-    analyze_urls(args.force_analyze)
+        print("\n=== Analyzing URLs ===")
+        analyze_urls(args.force_analyze)
 
-    print("\n=== Analyzing TLS configurations ===")
-    analyze_tls(args.force_analyze_tls, args.force_analyze_tls_failed)
+        print("\n=== Analyzing TLS configurations ===")
+        analyze_tls(args.force_analyze_tls, args.force_analyze_tls_failed)
 
     calculate_statistics()
 
@@ -185,7 +192,22 @@ def download_apks(force=False, google_username=None, google_password=None):
         if google_username and google_password:
             # Download from the Google Play store if username and password are provided
             cmd += f' -d GooglePlay -u "{google_username}" -p "{google_password}"'
-        success = os.system(cmd)
+
+        retry = 0
+        while retry < 3:
+            success = os.system(cmd)
+
+            if success == 0:
+                # Download succeeded, no need to retry
+                break
+
+            if google_username and google_password:
+                # Download may have hit rate limiting, wait for a bit
+                print(colored(f'Failed to download, sleeping for 2 minutes', 'yellow'))
+                time.sleep(120)
+
+            retry += 1
+
         if success != 0:
             print(colored(f'Error: failed to download {path.basename(package_id)}', 'red'))
         else:
@@ -358,6 +380,12 @@ def extract_app_urls(app_dir):
 
                         # Find all URLs in line
                         results = url_regex.findall(line)
+
+                        if len(line) > 1024:
+                            # Do not save large lines, they may be very large minified files
+                            # with all contents on one line
+                            line = None
+
                         for result in results:
                             urls.append({
                                 'file': os.path.join(root, file),
@@ -416,7 +444,7 @@ def process_urls(force=False):
         processed_urls = []
         for url in urls:
             # Check if URL is an api URL
-            if url['line'].strip()[0] in ['*', '/']:
+            if url['line'] is not None and url['line'].strip()[0] in ['*', '/']:
                 # Skip comments
                 continue
             if 'w3.org' in url['domain'].lower() or \
@@ -592,7 +620,7 @@ def analyze_tls(force=False, force_failed=False):
             data = json.load(f)
             for domain in data['domains']:
                 # Only analyze domains that haven't been analyzed before, unless forced otherwise
-                if domain in tls_configs and not force and not (force_failed and tls_configs[domain] is None):
+                if domain in tls_configs and not force and not (force_failed and (domain not in tls_configs or tls_configs[domain] is None)):
                     print(colored(f'Skipping analysis of TLS of {domain}, already analyzed', 'yellow'))
                     continue
                 else:
@@ -605,7 +633,7 @@ def analyze_tls(force=False, force_failed=False):
         print(f'Analyzing TLS for {domain}...')
 
         # Run tls-scan on the domain
-        retry = 3
+        retry = 0
         while retry < 3:
             # We retry the scan several times because experience showed that sometimes the scan fails for unknown reasons
             cmd = f'tls-scan --cacert /etc/ssl/certs/ca-certificates.crt --all -c "{domain}"'
@@ -644,69 +672,157 @@ def analyze_tls(force=False, force_failed=False):
 
 
 def calculate_statistics():
-    http_only_apps = 0
-    https_only_apps = 0
-
-    http_urls = 0
-    https_urls = 0
-
-    http_with_https_available = 0
-    https_with_old_config = 0
-    https_with_intermediate_config = 0
-    https_with_modern_config = 0
-
+    # Enumerate JSON files of applications containing URLs
     urls_json_files = [file for file in glob.glob(path.join(workdir, 'decompiled', '*', 'urls_analyzed.json')) if path.isfile(file)]
+
+    # Get results of TLS scans from JSON file
     tls_json_file = path.join(workdir, 'tls.json')
     with open(tls_json_file, 'r') as f:
         tls_data = json.load(f)
 
-    application_count = len(urls_json_files)
+    # Variables to be populated with statistics
+    http_only_apps  = 0  # Number of apps that only use HTTP requests
+    https_only_apps = 0  # Number of apps that only use HTTPS requests
 
+    http_domains  = set()  # Set of domains using HTTP in some application
+    https_domains = set()  # Set of domains using HTTPS in some application
+
+    # Loop through JSON files of applications containing URLs, and gather statistics
     for urls_json_file in urls_json_files:
+        # Load the URL information from the JSON file
         with open(urls_json_file, 'r') as f:
             data = json.load(f)
+
+        # HTTP / HTTPS usage of apps
         if data['url_https_count'] == 0 and data['url_http_count'] != 0:
             http_only_apps += 1
         elif data['url_https_count'] != 0 and data['url_http_count'] == 0:
             https_only_apps += 1
 
-        http_urls += data['url_http_count']
-        https_urls += data['url_https_count']
-
+        # HTTP / HTTPS usage for domains
         for url in data['urls']:
-            if not url['https']:
-                # Check if URL supports TLS
-                if tls_data[url['domain']] is None:
-                    # Not a valid domain
-                    http_urls -= 1
-                elif tls_data[url['domain']] is not False:
-                    # URL domain has TLS support
-                    http_with_https_available += 1
+            if url['https']:
+                https_domains.add(url['domain'])
             else:
-                # Check if TLS is secure
-                if tls_data[url['domain']] is None:
-                    # Not a valid domain
-                    https_urls -= 1
-                elif tls_data[url['domain']] is False:
-                    # URL domain does not have TLS support
-                    https_with_old_config += 1
-                else:
-                    security = mozilla_tls_configuration_security(tls_data[url['domain']])
-                    if security == 'old':
-                        https_with_old_config += 1
-                    elif security == 'intermediate':
-                        https_with_intermediate_config += 1
-                    elif security == 'modern':
-                        https_with_modern_config += 1
+                http_domains.add(url['domain'])
 
-    print(f"Found {http_only_apps}/{application_count} applications with HTTP only")
-    print(f"Found {https_only_apps}/{application_count} applications with HTTPS only")
-    print(f"Found {application_count - http_only_apps - https_only_apps}/{application_count} applications with mixed HTTP/HTTPS")
+    # Split HTTP and HTTPS domain list into HTTP only, mixed and HTTPS lists
+    http_only_domains = http_domains - https_domains          # Domains that only use HTTP
+    https_only_domains = https_domains - http_domains         # Domains that only use HTTPS
+    mixed_domains = http_domains.intersection(https_domains)  # Domains that use HTTP in some apps and HTTPS in other apps
 
-    print(f"Found {http_with_https_available}/{http_urls} URLs using HTTP that could also use HTTPS")
-    print(f"Found {https_with_old_config}/{https_urls} URLs using old TLS config")
-    print(f"Found {https_with_intermediate_config}/{https_urls} URLs using intermediate TLS config")
-    print(f"Found {https_with_modern_config}/{https_urls} URLs using modern TLS config")
+    # Variables to be populated with statistics
+    unresolved_domains = 0  # Number of domains that failed to resolve
+    no_tls_http_domains = 0  # Number of domains using HTTP that do not have a TLS configuration
+    tls_http_domains = 0  # Number of domains using HTTP that do have a TLS configuration
+    no_tls_mixed_domains = 0  # Number of domains that use HTTP in some and HTTPS in other apps that do not have a TLS configuration
+    tls_mixed_domains = 0  # Number of domains that use HTTP in some and HTTPS in other apps that do have a TLS configuration
+    no_tls_https_domains = 0  # Number of domains that use HTTPS that do not have a TLS configuration
+    tls_https_domains = 0  # Number of domains that use HTTPS that do  have a TLS configuration
+
+    domains_certificate_issues = {
+        'Valid': 0
+    }
+
+    domains_tls_configs = {}
+
+    # TLS configuration for HTTP only domains
+    for domain in http_only_domains:
+        if tls_data[domain] is None:
+            unresolved_domains += 1
+        elif tls_data[domain] is False:
+            no_tls_http_domains += 1
+        else:
+            tls_http_domains += 1
+
+    # TLS configuration for mixed domains
+    for domain in mixed_domains:
+        if tls_data[domain] is None:
+            unresolved_domains += 1
+        elif tls_data[domain] is False:
+            no_tls_mixed_domains += 1
+        else:
+            tls_mixed_domains += 1
+
+    # TLS configuration for HTTPS only domains
+    for domain in https_only_domains:
+        if tls_data[domain] is None:
+            unresolved_domains += 1
+        elif tls_data[domain] is False:
+            no_tls_https_domains += 1
+        else:
+            tls_https_domains += 1
+
+    for domain_tls in tls_data.values():
+        if domain_tls is None or domain_tls is False:
+            continue
+
+        if domain_tls['verifyCertResult'] is True:
+            domains_certificate_issues['Valid'] += 1
+        else:
+            if domain_tls['verifyCertError'] not in domains_certificate_issues:
+                domains_certificate_issues[domain_tls['verifyCertError']] = 1
+            else:
+                domains_certificate_issues[domain_tls['verifyCertError']] += 1
+
+        tls_support = [tls_version for tls_version in domain_tls['tlsVersions'] if tls_version[:len('TLS')] == 'TLS']
+        if domain_tls['tlsVersion'].replace('.', '_') not in tls_support:
+            # Sometimes, the TLS version in the tlsVersion field is not listed in the tlsVersions field.
+            tls_support.append(domain_tls['tlsVersion'].replace('.', '_'))
+        tls_support.sort()
+        tls_support = ', '.join([tls[len('TLSv'):].replace('_', '.') for tls in tls_support])
+        if tls_support not in domains_tls_configs:
+            domains_tls_configs[tls_support] = 1
+        else:
+            domains_tls_configs[tls_support] += 1
+
+    # Display statistics for HTTP/HTTPS usage in apps
+    labels = ('HTTP only', 'Mixed', 'HTTPS only')
+    application_count = len(urls_json_files)
+    values = [http_only_apps, application_count - http_only_apps - https_only_apps, https_only_apps]
+    plot_bar_chart(labels, values, 'Apps', 'HTTP/HTTPS usage in apps')
+
+    # Display statistics for HTTP/HTTPS usage for domains
+    labels = ('HTTP only', 'Mixed', 'HTTPS only')
+    values = [len(http_only_domains), len(mixed_domains), len(https_only_domains)]
+    plot_bar_chart(labels, values, 'Domains', 'HTTP/HTTPS usage for domains')
+
+    # Display statistics for TLS configuration of domains
+    labels = ('Unresolved', 'No TLS HTTP', 'TLS HTTP', 'No TLS Mixed', 'TLS Mixed', 'No TLS HTTPS', 'TLS HTTPS')
+    values = [unresolved_domains, no_tls_http_domains, tls_http_domains, no_tls_mixed_domains, tls_mixed_domains, no_tls_https_domains, tls_https_domains]
+    plot_bar_chart(labels, values, 'Domains', 'TLS configuration for domains')
+
+    # Display statistics for TLS certificate errors
+    labels = list(domains_certificate_issues.keys())
+    values = list(domains_certificate_issues.values())
+    plot_bar_chart(labels, values, 'Domains', 'TLS certificate errors', True)
+
+    # Display statistics for TLS versions
+    domains_tls_configs = {k: v for k, v in domains_tls_configs.items() if v > 100}  # Do not show configurations with negligible usage
+    labels = list(domains_tls_configs.keys())
+    values = list(domains_tls_configs.values())
+    plot_bar_chart(labels, values, 'Domains', 'TLS versions', True)
+
+
+def add_bar_chart_labels(labels, values):
+    # Add labels with the value of each bar
+    for i in range(len(labels)):
+        plt.text(i, values[i] + max(values) * 0.01, values[i], ha='center')
+
+
+def plot_bar_chart(labels, values, y_label, title, rotate_labels=False):
+    y_pos = np.arange(len(labels))
+    fig = plt.figure(figsize=(len(labels)*2, 6))
+    plt.bar(y_pos, values, align='center')
+    add_bar_chart_labels(labels, values)
+    if rotate_labels:
+        plt.xticks(y_pos, [label.capitalize() for label in labels], rotation=-10, ha='left')
+    else:
+        plt.xticks(y_pos, [label.capitalize() for label in labels])
+    plt.ylabel(y_label)
+    plt.title(title)
+    fig.tight_layout()
+    plt.show()
 
 
 def mozilla_tls_configuration_security(configuration):
