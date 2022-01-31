@@ -1,10 +1,8 @@
 import glob
 import json
-import re
 from os import path
-import numpy as np
-from matplotlib import pyplot as plt
-from termcolor import colored
+from util.apps import get_top_apps, get_bottom_apps, get_cleartext_traffic_usage
+from util.plotting import plot_bar_chart
 
 
 def calculate_statistics(workdir):
@@ -131,29 +129,29 @@ def calculate_statistics(workdir):
             else:
                 domains_tls_configs[tls_version] += 1
 
-    (can_use_cleartext, cannot_use_cleartext) = calculate_cleartext_traffic_usage(workdir)
+    (can_use_cleartext, cannot_use_cleartext) = get_cleartext_traffic_usage(workdir)
 
     # Display statistics for HTTP/HTTPS usage in apps
-    labels = ('HTTP only', 'Mixed', 'HTTPS only')
+    labels = ['HTTP only', 'Mixed', 'HTTPS only']
     application_count = len(urls_json_files)
     values = [http_only_apps, application_count - http_only_apps - https_only_apps, https_only_apps]
     plot_bar_chart(labels, values, 'Apps', 'HTTP/HTTPS usage in apps')
 
-    labels = ('HTTP only', 'Mixed', 'HTTPS only')
+    labels = ['HTTP only', 'Mixed', 'HTTPS only']
     values = [http_only_top_apps, top_bottom_apps_count - http_only_top_apps - https_only_top_apps, https_only_top_apps]
     plot_bar_chart(labels, values, 'Apps', f'HTTP/HTTPS usage in top {top_bottom_apps_count} apps')
 
-    labels = ('HTTP only', 'Mixed', 'HTTPS only')
+    labels = ['HTTP only', 'Mixed', 'HTTPS only']
     values = [http_only_bottom_apps, top_bottom_apps_count - http_only_bottom_apps - https_only_bottom_apps, https_only_bottom_apps]
     plot_bar_chart(labels, values, 'Apps', f'HTTP/HTTPS usage in bottom {top_bottom_apps_count} apps')
 
     # Display statistics for HTTP/HTTPS usage for domains
-    labels = ('HTTP only', 'Mixed', 'HTTPS only')
+    labels = ['HTTP only', 'Mixed', 'HTTPS only']
     values = [len(http_only_domains), len(mixed_domains), len(https_only_domains)]
     plot_bar_chart(labels, values, 'Domains', 'HTTP/HTTPS usage for domains')
 
     # Display statistics for TLS configuration of domains
-    labels = ('Unresolved', 'No TLS, using HTTP', 'TLS, using HTTP', 'No TLS, using Mixed', 'TLS, using Mixed', 'No TLS, using HTTPS', 'TLS, using HTTPS')
+    labels = ['Unresolved', 'No TLS, using HTTP', 'TLS, using HTTP', 'No TLS, using Mixed', 'TLS, using Mixed', 'No TLS, using HTTPS', 'TLS, using HTTPS']
     values = [unresolved_domains, no_tls_http_domains, tls_http_domains, no_tls_mixed_domains, tls_mixed_domains, no_tls_https_domains, tls_https_domains]
     plot_bar_chart(labels, values, 'Domains', 'TLS configuration for domains')
 
@@ -168,99 +166,6 @@ def calculate_statistics(workdir):
     plot_bar_chart(labels, values, 'Domains', 'TLS versions supported by domains')
 
     # Display statistics for cleartext traffic usage
-    labels = ('Cleartext traffic', 'No cleartext traffic')
+    labels = ['Cleartext traffic', 'No cleartext traffic']
     values = [can_use_cleartext, cannot_use_cleartext]
     plot_bar_chart(labels, values, 'Apps', 'Usage of usesCleartextTraffic flag')
-
-
-def calculate_cleartext_traffic_usage(workdir):
-    # Enumerate AndroidManifest.xml files of applications
-    manifest_files = [file for file in glob.glob(path.join(workdir, 'decompiled', '*', 'AndroidManifest.xml')) if path.isfile(file)]
-
-    # Statistics
-    can_use_cleartext = 0
-    cannot_use_cleartext = 0
-
-    for manifest_file in manifest_files:
-        with open(manifest_file, 'r') as f:
-            manifest_xml = f.read()
-
-        # Extract SDK version using regex
-        sdk_version = re.search('platformBuildVersionCode="(.*?)"', manifest_xml).group(1)
-        if sdk_version >= '28':
-            # App should include usesCleartextTraffic to use HTTP traffic
-            if 'android:usesCleartextTraffic="true"' in manifest_xml:
-                can_use_cleartext += 1
-            else:
-                cannot_use_cleartext += 1
-
-    return can_use_cleartext, cannot_use_cleartext
-
-
-def add_bar_chart_labels(labels, values):
-    # Add labels with the value of each bar
-    for i in range(len(labels)):
-        plt.text(i, values[i] + max(values) * 0.01, values[i], ha='center')
-
-
-def plot_bar_chart(labels, values, y_label, title, rotate_labels=False):
-    y_pos = np.arange(len(labels))
-    fig = plt.figure(figsize=(len(labels)*2, 6))
-    plt.bar(y_pos, values, align='center')
-    add_bar_chart_labels(labels, values)
-    if rotate_labels:
-        plt.xticks(y_pos, map(uc_first, labels), rotation=-10, ha='left')
-    else:
-        plt.xticks(y_pos, map(uc_first, labels))
-    plt.ylabel(y_label)
-    plt.title(title)
-    fig.tight_layout()
-    plt.show()
-
-
-def get_top_apps(workdir, amount=100):
-    if not path.exists(path.join(workdir, 'apps.json')):
-        print(colored('No apps.json file found, cannot determine top apps', 'yellow'))
-        return None
-
-    # Loop through apps to download
-    with open(path.join(workdir, 'apps.json')) as f:
-        packages = json.load(f)
-
-    top_apps = []
-    index = 1
-    while len(top_apps) < amount:
-        for package in packages:
-            if package['index'] == index:
-                top_apps.append(package['package_id'])
-            if len(top_apps) == amount:
-                break
-        index += 1
-
-    return top_apps
-
-
-def get_bottom_apps(workdir, amount=100):
-    if not path.exists(path.join(workdir, 'apps.json')):
-        print(colored('No apps.json file found, cannot determine bottom apps', 'yellow'))
-        return None
-
-    # Loop through apps to download
-    with open(path.join(workdir, 'apps.json')) as f:
-        packages = json.load(f)
-
-    bottom_apps = []
-    index = max(package['index'] for package in packages)
-    while len(bottom_apps) < amount:
-        for package in packages:
-            if package['index'] == index:
-                bottom_apps.append(package['package_id'])
-            if len(bottom_apps) == amount:
-                break
-        index -= 1
-
-    return bottom_apps
-
-
-def uc_first(string):
-    return string[0].upper() + string[1:]

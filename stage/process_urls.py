@@ -52,13 +52,13 @@ def process_urls(workdir, force=False):
         print(f'{len(processed_urls)} URLs processed')
 
         # Write URLs to json file
-        _save_to_json_file(path.dirname(json_file), processed_urls)
+        _save_to_json_file(json_file, processed_urls)
 
 
 def _check_existing_json_file(json_file, overwrite=False):
     """
     Check for an existing JSON file of extracted URLs
-    :param json_file: URLs json file
+    :param json_file: URLs JSON file
     :type json_file: str
     :param overwrite: will delete the current JSON file if one exists
     :type overwrite: bool
@@ -146,15 +146,15 @@ def _get_blacklist():
     return blacklist
 
 
-def _save_to_json_file(directory, processed_urls):
+def _save_to_json_file(json_file, processed_urls):
     """
     Save the list of apps to a JSON file
-    :param directory: directory to write JSON to
-    :type directory: str
+    :param json_file: URLs JSON file
+    :type json_file: str
     :param processed_urls: list of processed urls
-    :type processed_urls: list[dict
+    :type processed_urls: list[dict]
     """
-    json_path = path.join(directory, 'urls_processed.json')
+    json_path = path.join(path.basename(json_file), 'urls_processed.json')
     with open(json_path, 'w') as f:
         json.dump(processed_urls, f)
         print(f'Processed URLs saved to {json_path}')
