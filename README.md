@@ -1,4 +1,5 @@
 # Cloud Networking Project - HTTP(S) usage in Android apps
+The Python script in this repository downloads the top apps from the Google Play Store, decompiles them, extracts used URLs, and analyzes the TLS configurations of the domains of these URLs. Finally, statistics are shown on HTTP(S) and TLS usage and configuration in the apps.
 
 ## Install dependencies
 ### Install Python dependencies
