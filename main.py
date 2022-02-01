@@ -40,6 +40,9 @@ def run():
     parser.add_argument('-so', '--statistics-only', action='store_true', dest='statistics_only',
                         help='only show statistics and skip all other steps')
 
+    parser.add_argument('-l', '--limit_apps', nargs='?', type=int,  dest='limit_apps',
+                        help='limit the number of apps to download and analyze to the given number')
+
     parser.add_argument('-u', '--google-username', nargs='?', dest='google_username',
                         help='google username to authenticate with for usage with apkeep to download apps')
     parser.add_argument('-p', '--google-password', nargs='?', dest='google_password',
@@ -60,7 +63,7 @@ def run():
         stage.scrape_package_ids.scrape_package_ids(workdir, args.force_scrape)
 
         print("=== Downloading apps ===")
-        stage.download_apks.download_apks(workdir, args.force_download_apps, args.google_username, args.google_password)
+        stage.download_apks.download_apks(workdir, args.force_download_apps, args.google_username, args.google_password, args.limit_apps)
 
         print("\n=== Decompiling apps ===")
         stage.decompile_apks.decompile_apks(workdir, args.force_decompile)
