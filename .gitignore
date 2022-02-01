@@ -6,3 +6,6 @@ source
 
 # Ignore venv
 venv
+
+# Ignore pycache
+**/__pycache__
