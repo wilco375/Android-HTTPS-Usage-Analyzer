@@ -1,3 +1,4 @@
+import glob
 import json
 import os
 import time
@@ -29,7 +30,12 @@ def download_apks(workdir, force=False, google_username=None, google_password=No
 
     # Download scraped apps
     package_ids = _get_package_ids(workdir)
-    success_count = 0
+    existing_apks = glob.glob(path.join(workdir, '*.apk'))
+    if not force and len(existing_apks) >= limit:
+        print(colored('Limit of apps to download reached with already downloaded apps, skipping downloading', 'yellow'))
+        return
+
+    success_count = len(existing_apks)
     for package_id in package_ids:
         success = _download_apk(workdir, package_id, force, google_username, google_password)
 

@@ -34,7 +34,7 @@ def scrape_package_ids(workdir, force=False):
             apps.extend(category_apps)
 
     # Remove potential duplicates
-    apps = toolz.unique(apps, key=lambda app: app['package_id'])
+    apps = list(toolz.unique(apps, key=lambda app: app['package_id']))
 
     # Save apps to JSON file
     _save_to_json_file(workdir, apps)
@@ -67,7 +67,7 @@ def _scrape_categories():
     """
     Scrape the Google Play Store home page for a list of categories
     :return: list of category URLs
-    :rtype: list[string]
+    :rtype: set[string]
     """
     url = 'https://play.google.com/store/apps'
     response = requests.get(url)
@@ -80,7 +80,7 @@ def _scrape_categories():
     categories = re.findall('/store/apps/category/[A-Za-z_]+', response.text)
 
     # Do not include game subcategories because of large package sizes
-    return [category for category in categories if 'GAME_' not in category]
+    return set([category for category in categories if 'GAME_' not in category])
 
 
 def _scrape_category(category_url):

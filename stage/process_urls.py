@@ -43,7 +43,7 @@ def process_urls(workdir, force=False):
             if (url['line'] is not None and any(url['line'].strip().startswith(prefix) for prefix in blacklist['lines'])) or \
                     any(in_url in url['url'].lower() for in_url in blacklist['in_urls']) or \
                     any(in_domain in url['domain'].lower() for in_domain in blacklist['in_domains']) or \
-                    any(domain == url['domain'].lower() for domain in blacklist['in_domains']) or \
+                    any(domain == url['domain'].lower() for domain in blacklist['domains']) or \
                     any(url['url'].lower().endswith(extension) for extension in blacklist['extensions']):
                 continue
 
@@ -154,7 +154,7 @@ def _save_to_json_file(json_file, processed_urls):
     :param processed_urls: list of processed urls
     :type processed_urls: list[dict]
     """
-    json_path = path.join(path.basename(json_file), 'urls_processed.json')
+    json_path = path.join(path.dirname(json_file), 'urls_processed.json')
     with open(json_path, 'w') as f:
         json.dump(processed_urls, f)
         print(f'Processed URLs saved to {json_path}')

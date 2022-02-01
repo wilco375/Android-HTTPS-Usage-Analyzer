@@ -24,7 +24,8 @@ def extract_urls(workdir, force=False):
         print(f'Extracting URLs from {path.basename(decompiled_dir)}...')
 
         # Check if URLs have already been extracted
-        _check_existing_json_file(decompiled_dir, force)
+        if _check_existing_json_file(decompiled_dir, force):
+            continue
 
         # Extract URLs from app
         urls = _extract_app_urls(decompiled_dir)

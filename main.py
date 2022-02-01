@@ -62,7 +62,7 @@ def run():
         print("=== Extracting top apps from Google Play ===")
         stage.scrape_package_ids.scrape_package_ids(workdir, args.force_scrape)
 
-        print("=== Downloading apps ===")
+        print("\n=== Downloading apps ===")
         stage.download_apks.download_apks(workdir, args.force_download_apps, args.google_username, args.google_password, args.limit_apps)
 
         print("\n=== Decompiling apps ===")
@@ -72,14 +72,15 @@ def run():
         stage.extract_urls.extract_urls(workdir, args.force_extract)
 
         print("\n=== Processing URLs ===")
-        stage.process_urls.process_urls(args.force_process)
+        stage.process_urls.process_urls(workdir, args.force_process)
 
         print("\n=== Analyzing URLs ===")
-        stage.analyze_urls.analyze_urls(args.force_analyze)
+        stage.analyze_urls.analyze_urls(workdir, args.force_analyze)
 
         print("\n=== Analyzing TLS configurations ===")
-        stage.analyze_tls.analyze_tls(args.force_analyze_tls, args.force_analyze_tls_failed)
+        stage.analyze_tls.analyze_tls(workdir, args.force_analyze_tls, args.force_analyze_tls_failed)
 
+    print("\n=== Plotting statistics ===")
     stage.calculate_statistics.calculate_statistics(workdir)
 
 
