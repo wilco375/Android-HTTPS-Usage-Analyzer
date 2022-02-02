@@ -211,7 +211,7 @@ def _plot_statistics(statistics):
     # Display statistics for TLS certificate errors
     labels = list(statistics['domains_certificate_issues'].keys())
     values = list(statistics['domains_certificate_issues'].values())
-    plot_bar_chart(labels, values, 'Domains', 'TLS certificate errors of HTTPS domains', True)
+    plot_bar_chart(labels, values, 'Domains', 'TLS certificate errors of TLS supporting domains', True)
 
     # Display statistics for TLS versions
     labels = list(statistics['domains_tls_configs'].keys())
